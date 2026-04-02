@@ -1,0 +1,5 @@
+# MATLAB workspace / binary data (large; regenerate or store elsewhere)
+*.mat
+
+# PostScript figure / print exports
+*.ps

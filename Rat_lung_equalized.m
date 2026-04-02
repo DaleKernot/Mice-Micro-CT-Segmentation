@@ -1,0 +1,666 @@
+clc
+clear all
+close all
+
+%% Segmenting of rat scans 
+% 1) Load to 3D array
+% 2) Apply some Pre processing tansforms
+% 3) Edge detection/Threshold/Texture analysis for segmentation
+% 4) Based of segmentation, reduce image size to minimum possible
+%
+tic
+%% Load
+% extra data: F:\Jessica Britton\Raw Data Files_ Mice 6,8,10\mouse06\01\raw
+path = "I:\image_stack_example_SPring_8\";
+%path = "F:\Jessica Britton\Raw Data Files_ Mice 6,8,10\mouse06\01\raw\";
+file_handle = "mouse21_06_ro_2DNLM*.tif";
+%file_handle = "rec0*.tif";
+dirOutput = dir(fullfile(path,file_handle)); %%% lists files in the folder that meet criteria
+fileNames = {dirOutput.name}';
+TotalFrames = numel(fileNames);
+stitches = ceil(TotalFrames/500); % No more than 100 slices to process at any time, could uncrease?
+FrameBounds = ceil(linspace(1,TotalFrames,stitches));
+
+%FrameBounds = 1:30;
+x_min = [];
+x_max = [];
+y_min = [];
+y_max = [];
+
+for stitch = 2:length(FrameBounds);
+
+    if stitch == 2
+      numFrames = FrameBounds(stitch-1):FrameBounds(stitch); 
+      %numFrames = FrameBounds(stitch-1):FrameBounds(end);
+      %numFrames = 40:100;
+    else
+      numFrames = (FrameBounds(stitch-1)+1):FrameBounds(stitch);  
+    end
+
+rng = max(numFrames) - min(numFrames);
+I = imread(path + fileNames{numFrames(1)}); %%% creating an empty m by n by p array
+sequence = zeros([size(I) rng],class(I));
+sequence(:,:,1) = I;
+sequence_masked = zeros([size(I) rng],class(I));
+for p = 2:length(numFrames);   %%% reading images into the array
+    sequence(:,:,p) = imread(path + fileNames{numFrames(p)});
+end
+
+sequence = im2uint8(sequence);
+figure(1);
+imhist(sequence,255); % overall histogram of image sequence
+pos = [2200 100 1e+03 1000];
+ixjxk = size(sequence);
+Background_mask = zeros(ixjxk);
+Background_mask(sequence<1) = 1; % high intensity threshold for hard tissues
+% figure(2);
+% sliceViewer(sequence); % Slice view of original images
+sequence = histeq(sequence,255);
+figure(3);
+imhist(sequence,255); % overall histogram of image sequence
+f = figure(4);
+sliceViewer(sequence); % Slice view of original images
+set(f,'Position',pos);
+% sequence = smoothdata(sequence,'gaussian');%,[21 21 21]);
+% figure(3);
+% sliceViewer(sequence); % Slice view of original images
+
+a = 70;
+b = 240;
+
+% % % % for k = 1:ixjxk(3);
+% % % %      for i=1:ixjxk(1);
+% % % %          for j=1:ixjxk(2);
+% % % %              if Background_mask(i,j,k)==1 ; % 
+% % % %                  sequence(i,j,k)=round((b-a).*rand(1) + a);
+% % % %              else
+% % % %              end
+% % % %          end
+% % % %      end
+% % % % end
+ 
+I = find(Background_mask == 1);
+for i = 1:length(I);
+sequence(I(i)) = round((b-a).*rand(1) + a);
+end
+fprintf('Loaded \n');
+toc
+BW_thresh = zeros(ixjxk);
+BW_thresh(sequence>250) = 1; % high intensity threshold for hard tissues
+
+
+for i=0;
+% for k = 1:ixjxk(3);
+%     for i=1:ixjxk(1);
+%         for j=1:ixjxk(2);
+%             if sequence(i,j,k)>= 145;
+%                 BW_thresh(i,j,k)=1;
+%             else
+%                 BW_thresh(i,j,k)=0;
+%             end
+%         end
+%     end
+% end
+
+% for k = 1:ixjxk(3);
+%     for i=1:ixjxk(1);
+%         for j=1:ixjxk(2);
+%             if sequence(i,j,k)>= 110 & sequence(i,j,k)<= 120;
+%                 BW_shadow_thresh(i,j,k)=1;
+%             else
+%                 BW_shadow_thresh(i,j,k)=0;
+%             end
+%         end
+%     end
+% end
+% se = strel('disk',3);
+% BW_shadow_thresh = imerode(BW_shadow_thresh,se);
+end
+
+% figure(1);
+% sliceViewer(BW_thresh);
+se = strel('disk',3);
+se2 = strel('disk',1);
+BW = imerode(BW_thresh,se);
+%BW_low = imerode(BW_low,se2);
+
+% figure(3);
+% sliceViewer(BW_low2);
+% figure(13);
+% sliceViewer(BW_shadow_thresh);
+% fprintf('Initial thresholds \n');
+
+% % Dont think we even need this now
+CC = bwconncomp(BW);
+numPixels = cellfun(@numel,CC.PixelIdxList);
+% [peaks, locs] = findpeaks(numPixels,'MinPeakProminence',2e5);
+% idx_2_clear = [];
+% for i = 1:length(locs);
+% idx_2_clear = [idx_2_clear ; CC.PixelIdxList{locs(i)}];
+% end
+% BW(idx_2_clear) = 0;
+% %
+volume_threshold = max(numPixels)/25; % might need to alter this for last stitch as lung vol relativley small
+
+BW = bwareaopen(BW,round(volume_threshold)); % quite good
+
+% figure(4);
+% sliceViewer(BW);
+
+for k = 1:ixjxk(3);
+BW(:,:,k) = imfill(BW(:,:,k),'holes');
+end
+se = strel('disk',8);
+se = strel('disk',4);
+BW = imdilate(BW,se);
+BW = imclose(BW,se);
+for k = 1:ixjxk(3);
+BW(:,:,k) = imfill(BW(:,:,k),'holes');
+end
+BW_4_shadow_search = imdilate(BW,se2);
+%combined = double(sequence) + 255*double(BW);
+%BW_combined = 255*double(BW_thresh) + 127*double(BW); 
+
+f=figure(101);
+sliceViewer(BW);
+set(f,'Position',pos);
+% figure(6);
+% sliceViewer(uint8(BW_combined));
+
+bounds = zeros(ixjxk);
+con_parts = zeros(ixjxk);
+for K = 1:ixjxk(3);
+    [B,L] = bwboundaries(BW(:,:,K),'noholes');
+    try
+        [B2,L2] = bwboundaries(BW(:,:,K + 1),'noholes');
+        [B1,L1] = bwboundaries(BW(:,:,K - 1),'noholes');
+        B = [B1;B;B2];
+        L = L1 + L + L2;
+    end
+    for k = 1:length(B)
+        boundary = B{k};
+        for i = 1:length(boundary(:,1));
+            bounds(boundary(i,1),boundary(i,2),K) = 1;
+        end
+    end
+end
+% CTSrgb = repmat(uint8(BW),[1,1,1,3]);
+% BW_threshrgb = repmat(uint8(BW_thresh),[1,1,1,3]);
+% BWrgb = repmat(uint8(BW),[1,1,1,3]);
+% 
+% CTSrgb = plot_filters(CTSrgb,BW_threshrgb,"g");
+% CTSrgb = plot_filters(CTSrgb,BWrgb,"w");
+% f = figure(6)
+% sliceViewer(CTSrgb);
+% set(f,'Position',pos);
+
+Intersect_points = (bounds & BW_thresh);
+idx = find(Intersect_points); % id of intersecting points
+[rows,cols,slice] = ind2sub(size(Intersect_points),idx); %
+RCS = [rows,cols,slice];
+% for i = 1:length(rows)
+%     if con_parts(rows(i),cols(i),slice(i)) == 0; % stops filling is equivalent fill has alredy been done
+%         
+%         Fill = grayconnected(BW_thresh(:,:,slice(i)),rows(i),cols(i));
+%         con_parts(:,:,slice(i)) = con_parts(:,:,slice(i)) + Fill;
+%         %
+% %         filled_IDX = find(Fill);
+% %         [hot_rows,hot_cols,hot_slice] = ind2sub(size(Fill),filled_IDX);
+% %         hot_RCS = [hot_rows,hot_cols,hot_slice];
+% %         [~,index_RCS,index_hot] = intersect(RCS,hot_RCS,'rows');
+% %         RCS(index_RCS,:) = [];
+%     else
+%     end
+% end
+% test replacement:
+while isempty(RCS)==0;
+        Fill = grayconnected(BW_thresh(:,:,RCS(1,3)),RCS(1,1),RCS(1,2)); % flood filling at seed point
+        con_parts(:,:,RCS(1,3)) = con_parts(:,:,RCS(1,3)) + Fill; % Add filled region to existing mask
+        %imshow(uint8(90*Fill + 140*Intersect_points(:,:,1)))
+        %
+        filled_IDX = find(Fill); % indexs of filled pixels
+        [hot_rows,hot_cols,hot_slice] = ind2sub(size(Fill),filled_IDX); % postion for indexs
+        hot_RCS = [hot_rows,hot_cols,RCS(1,3)*ones(size(hot_slice))]; % on this slice only
+        [~,index_RCS,index_hot] = intersect(RCS,hot_RCS,'rows'); % common RC combo between seed point list and flooded region
+        RCS(index_RCS,:) = []; % reduce seed point list by removing regions covered in the flood
+        %fprintf('%d \n',length(RCS));
+end
+% Intersect_pointsrgb = repmat(uint8(Intersect_points),[1,1,1,3]);
+% CTSrgb = repmat(uint8(BW),[1,1,1,3]);
+% BWrgb = repmat(uint8(BW),[1,1,1,3]);
+% for i = 1:ixjxk(3)
+% BW_thresh(:,:,i) = BW_thresh(:,:,60);
+% end
+% threshrgb = repmat(uint8(BW_thresh),[1,1,1,3]);
+% 
+% %CTSrgb = plot_filters(CTSrgb,con1rgb,"r");
+% CTSrgb = plot_filters(CTSrgb,threshrgb,"g");
+% CTSrgb = plot_filters(CTSrgb,BWrgb,"w");
+% 
+% f = figure(6)
+% sliceViewer(CTSrgb);
+% set(f,'Position',pos);
+
+% dilate connected parts
+con_parts = imdilate(con_parts,strel('disk',4)); 
+%% new
+se2 = strel('disk',100);
+con_parts = imclose(con_parts,se2);
+for k = 1:ixjxk(3);
+    con_parts(:,:,k) = imfill(con_parts(:,:,k),'holes');
+end
+%%
+%sliceViewer(con_parts)
+fprintf('First round of connected boundaries \n');
+toc
+
+for i=0;
+% bounds = zeros(ixjxk);
+% for K = 1:ixjxk(3);
+% [B,L] = bwboundaries(BW_shadow_thresh(:,:,K),'noholes');
+% try
+% [B2,L2] = bwboundaries(BW_shadow_thresh(:,:,K + 1),'noholes');
+% [B1,L1] = bwboundaries(BW_shadow_thresh(:,:,K - 1),'noholes');
+% B = [B1;B;B2];
+% L = L1 + L + L2;
+% end
+% for k = 1:length(B)
+%    boundary = B{k};
+%     for i = 1:length(boundary(:,1));
+%         bounds(boundary(i,1),boundary(i,2),K) = 1;
+%     end 
+% end
+% end
+% Intersect_points = (bounds & BW_thresh);
+% idx = find(Intersect_points); % id of intersecting points
+% [rows,cols,slice] = ind2sub(size(Intersect_points),idx); %
+% for i = 1:length(rows)
+%     if con_parts(rows(i),cols(i),slice(i)) == 0; % stops filling is equivalent fill has alredy been done 
+%         con_parts(:,:,slice(i)) = con_parts(:,:,slice(i)) + grayconnected(BW_thresh(:,:,slice(i)),rows(i),cols(i));
+%     else
+%     end
+% end
+% 
+% 
+end
+
+% Repeat using connected parts extension:
+bounds = zeros(ixjxk);
+con_parts2 = zeros(ixjxk);
+for K = 1:ixjxk(3);
+[B,L] = bwboundaries(con_parts(:,:,K),'noholes');
+try
+    try
+    [B3,L3] = bwboundaries(con_parts(:,:,K + 10),'noholes');
+    catch
+    [B3,L3] = bwboundaries(con_parts(:,:,ixjxk(3)),'noholes');
+    end
+[B2,L2] = bwboundaries(con_parts(:,:,K + 1),'noholes');
+[B1,L1] = bwboundaries(con_parts(:,:,K - 1),'noholes');
+B = [B1;B;B2;B3];
+L = L1 + L + L2 + L3;
+end
+for k = 1:length(B)
+   boundary = B{k};
+    for i = 1:length(boundary(:,1))
+        bounds(boundary(i,1),boundary(i,2),K) = 1;
+    end 
+end
+end
+Intersect_points = (bounds & BW_thresh);
+idx = find(Intersect_points); % id of intersecting points
+[rows,cols,slice] = ind2sub(size(Intersect_points),idx); %
+RCS = [rows,cols,slice];
+% for i = 1:length(rows)
+%     if con_parts2(rows(i),cols(i),slice(i)) == 0; % stops filling is equivalent fill has alredy been done 
+%         con_parts2(:,:,slice(i)) = con_parts2(:,:,slice(i)) + grayconnected(BW_thresh(:,:,slice(i)),rows(i),cols(i));
+%     else
+%     end
+% end
+
+while isempty(RCS)==0;
+        Fill = grayconnected(BW_thresh(:,:,RCS(1,3)),RCS(1,1),RCS(1,2));
+        con_parts2(:,:,RCS(1,3)) = con_parts2(:,:,RCS(1,3)) + Fill;
+        %imshow(uint8(90*Fill + 140*Intersect_points(:,:,1)))
+        %
+        filled_IDX = find(Fill);
+        [hot_rows,hot_cols,hot_slice] = ind2sub(size(Fill),filled_IDX);
+        hot_RCS = [hot_rows,hot_cols,RCS(1,3)*ones(size(hot_slice))];
+        [~,index_RCS,index_hot] = intersect(RCS,hot_RCS,'rows');
+        RCS(index_RCS,:) = [];
+        %fprintf('%d \n',length(RCS));
+end
+
+
+% dilate connected parts
+con_parts2 = imdilate(con_parts2,strel('disk',5)); 
+se2 = strel('disk',100);
+con_parts2 = imclose(con_parts2,se2);
+fprintf('Second round of connected boundaries \n');
+toc
+
+% Repeat using connected parts extension:
+bounds = zeros(ixjxk);
+con_parts3 = zeros(ixjxk);
+for K = 1:ixjxk(3);
+[B,L] = bwboundaries(con_parts2(:,:,K),'noholes');
+try
+    try
+    [B3,L3] = bwboundaries(con_parts2(:,:,K + 5),'noholes');
+    catch
+    [B3,L3] = bwboundaries(con_parts2(:,:,ixjxk(3)),'noholes');
+    end
+    
+    try
+    [B4,L4] = bwboundaries(con_parts2(:,:,K - 5),'noholes');
+    catch
+    [B4,L4] = bwboundaries(con_parts2(:,:,1),'noholes');
+    end
+    
+[B2,L2] = bwboundaries(con_parts2(:,:,K + 1),'noholes');
+[B1,L1] = bwboundaries(con_parts2(:,:,K - 1),'noholes');
+B = [B1;B;B2;B3;B4];
+L = L1 + L + L2 + L3 + L4;
+end
+for k = 1:length(B)
+   boundary = B{k};
+    for i = 1:length(boundary(:,1))
+        bounds(boundary(i,1),boundary(i,2),K) = 1;
+    end 
+end
+end
+Intersect_points = (bounds & BW_thresh);
+idx = find(Intersect_points); % id of intersecting points
+[rows,cols,slice] = ind2sub(size(Intersect_points),idx); %
+% for i = 1:length(rows)
+%     if con_parts3(rows(i),cols(i),slice(i)) == 0; % stops filling is equivalent fill has alredy been done 
+%         con_parts3(:,:,slice(i)) = con_parts3(:,:,slice(i)) + grayconnected(BW_thresh(:,:,slice(i)),rows(i),cols(i));
+%     else
+%     end
+% end
+
+RCS = [rows,cols,slice];
+while isempty(RCS)==0;
+        Fill = grayconnected(BW_thresh(:,:,RCS(1,3)),RCS(1,1),RCS(1,2));
+        con_parts3(:,:,RCS(1,3)) = con_parts3(:,:,RCS(1,3)) + Fill;
+        %imshow(uint8(90*Fill + 140*Intersect_points(:,:,1)))
+        %
+        filled_IDX = find(Fill);
+        [hot_rows,hot_cols,hot_slice] = ind2sub(size(Fill),filled_IDX);
+        hot_RCS = [hot_rows,hot_cols,RCS(1,3)*ones(size(hot_slice))];
+        [~,index_RCS,index_hot] = intersect(RCS,hot_RCS,'rows');
+        RCS(index_RCS,:) = [];
+        %fprintf('%d \n',length(RCS));
+end
+
+
+
+% CTSrgb = repmat(uint8(BW),[1,1,1,3]);
+% con1rgb = repmat(uint8(con_parts),[1,1,1,3]);
+% con2rgb = repmat(uint8(con_parts2),[1,1,1,3]);
+% con3rgb = repmat(uint8(con_parts3),[1,1,1,3]);
+% BWrgb = repmat(uint8(BW),[1,1,1,3]);
+% 
+% CTSrgb = plot_filters(CTSrgb,con1rgb,"b");
+% CTSrgb = plot_filters(CTSrgb,con2rgb,"g");
+% CTSrgb = plot_filters(CTSrgb,con3rgb,"r");
+% CTSrgb = plot_filters(CTSrgb,BWrgb,"w");
+% 
+% f = figure(7)
+% sliceViewer(CTSrgb);
+% set(f,'Position',pos);
+
+
+
+
+% dilate connected parts
+con_parts3 = imdilate(con_parts2,strel('disk',2)); 
+se2 = strel('disk',100);
+con_parts3 = imclose(con_parts3,se2);
+fprintf('Third round of connected boundaries \n');
+toc
+
+doubled_up= 255*double(con_parts3) + 190*double(con_parts2) + 110*double(con_parts) + 50*double(BW); 
+% % % figure(10)
+% % % sliceViewer(uint8(doubled_up));
+% % doubled_up = con_parts3 + con_parts2 + con_parts + BW;
+% % bone_shadows = zeros(ixjxk);
+% % 
+% % for K = 1:ixjxk(3);
+% % [B,L] = bwboundaries(BW_4_shadow_search(:,:,K),'noholes');
+% % for k = 1:length(B)
+% %    boundary = B{k};
+% %     for i = 1:length(boundary(:,1))
+% %         bounds(boundary(i,1),boundary(i,2),K) = 1;
+% %     end 
+% % end
+% % end
+% % 
+% % %bone_and_shadow = 255*BW_4_shadow_search + 100*BW_low; 
+% % % figure(102)
+% % % sliceViewer(bone_and_shadow);
+% % clear BW BW_thresh Intersect_points con_parts con_parts2 con_parts3
+% % 
+% % BW_low = zeros(ixjxk);
+% % BW_low(sequence<60) = 1;
+% % BW_low2 = bwareaopen(BW_low,1e3);
+% % 
+% % Intersect_points = (bounds & BW_low2);
+% % idx = find(Intersect_points); % id of intersecting points
+% % [rows,cols,slice] = ind2sub(size(Intersect_points),idx); %
+% % RCS = [rows,cols,slice];
+% % % for i = 1:length(rows)
+% % %     if bone_shadows(rows(i),cols(i),slice(i)) == 0; % stops filling is equivalent fill has alredy been done 
+% % %         bone_shadows(:,:,slice(i)) = bone_shadows(:,:,slice(i)) + grayconnected(BW_low(:,:,slice(i)),rows(i),cols(i));
+% % %     else
+% % %     end
+% % % end
+% % 
+% % while isempty(RCS)==0;
+% %         Fill = grayconnected(BW_low(:,:,RCS(1,3)),RCS(1,1),RCS(1,2));
+% %         bone_shadows(:,:,RCS(1,3)) = bone_shadows(:,:,RCS(1,3)) + Fill;
+% %         %imshow(uint8(90*Fill + 140*Intersect_points(:,:,1)))
+% %         %
+% %         filled_IDX = find(Fill);
+% %         [hot_rows,hot_cols,hot_slice] = ind2sub(size(Fill),filled_IDX);
+% %         hot_RCS = [hot_rows,hot_cols,RCS(1,3)*ones(size(hot_slice))];
+% %         [~,index_RCS,index_hot] = intersect(RCS,hot_RCS,'rows');
+% %         RCS(index_RCS,:) = [];
+% %         %fprintf('%d \n',length(RCS));
+% % end
+% % 
+% % se = strel('disk',2);
+% % bone_shadows = imdilate(bone_shadows,se);
+%Bone_shadows = 255*imbinarize(doubled_up) + 50*bone_shadows;
+
+% figure(101)
+% sliceViewer(Bone_shadows);
+doubled_up = doubled_up %+ bone_shadows;
+toc
+clear BW_low BW_low2 Bone_shadows bone_shadows
+% rand range
+
+for k = 1:ixjxk(3);
+     for i=1:ixjxk(1);
+         for j=1:ixjxk(2);
+             if doubled_up(i,j,k)>=1 ; % 
+                 sequence(i,j,k)=round((b-a).*rand(1) + a);
+             else
+             end
+         end
+     end
+ end
+% figure(7);
+% sliceViewer(sequence);
+clear bounds BW_combined combined doubled_up I random_BW L idx cols boundary rows
+fprintf('Hidden hard tissues \n');
+toc
+%% Texture analysis
+% lack of contrast between lung, soft tissue and background means
+% thresholding would unlikley work. Many strong edges such as bone and body
+% boundary that would be picked up by edge detection. My first attempt
+% would be to examine the texture across the image, as the higher
+% randomness within the lungs may be an easy find.
+
+
+%H1 = logical(ones(15,15));
+%H2 = logical(ones(7,7));
+%H3 = logical(ones(9,9));
+% ENT1 = entropyfilt(sequence,H1);
+% ENT2 = entropyfilt(sequence,H2);
+%ENT3 = entropyfilt(uint8(sequence),H1);
+ENT3 = rangefilt(sequence,true(11));
+fprintf('Entropy filter \n')
+toc
+
+% figure(5);
+% sliceViewer(ENT3);
+
+ENT3_scaled = rescale(ENT3);
+sequence_binary = imbinarize(ENT3_scaled,0.95); % Hard number, may not be robust
+% sliceViewer(sequence_binary);
+%ct = bwconncomp(sequence_binary)
+clear ENT3_scaled
+% Threshold that targets the strong edges of airways
+for k = 1:ixjxk(3);
+    for i=1:ixjxk(1);
+        for j=1:ixjxk(2);
+            if sequence(i,j,k)>= 250; % optimised thresholds
+                % another tech for finding these circular objects would be
+                % ideal
+                BW(i,j,k)=1;
+            elseif sequence(i,j,k)<= 50;
+                BW(i,j,k)=1;
+            else
+                BW(i,j,k)=0;
+            end
+        end
+    end
+end
+%
+sequence_binary = sequence_binary + BW;
+clear reduced_ENT3
+reduced_ENT3 = bwareaopen(sequence_binary,1e5); % hard number check scalability
+
+se = strel('disk',10);
+clear BW_edges
+for k = 1:ixjxk(3);
+    BW_edges(:,:,k) = edge(sequence(:,:,k),'Canny',[0.6 0.8]);    
+end
+se = strel('disk',4);
+BW_edges = imdilate(BW_edges,se);
+reduced_ENT3 = reduced_ENT3 + BW_edges;
+
+for k = 1:ixjxk(3);
+    reduced_ENT3(:,:,k) = imfill(reduced_ENT3(:,:,k),'holes');    
+end
+
+CC = bwconncomp(sequence_binary);
+numPixels = cellfun(@numel,CC.PixelIdxList);
+vol_lim = max(numPixels)/10;
+reduced_ENT3 = bwareaopen(reduced_ENT3,round(vol_lim));
+
+se2 = strel('disk',10);
+for k = 1:ixjxk(3);
+    reduced_ENT3(:,:,k) = imclose(reduced_ENT3(:,:,k),se);
+    reduced_ENT3(:,:,k) = imfill(reduced_ENT3(:,:,k),'holes');
+    reduced_ENT3(:,:,k) = imdilate(reduced_ENT3(:,:,k),se2);
+    reduced_ENT3(:,:,k) = imfill(reduced_ENT3(:,:,k),'holes');
+    reduced_ENT3(:,:,k) = imerode(reduced_ENT3(:,:,k),se2);
+    %reduced_ENT3(:,:,k) = bwconvhull(reduced_ENT3(:,:,k),'objects');
+end
+
+%% SUN RUN
+se2 = strel('disk',100);
+for j = 1:ixjxk(2);
+    reduced_ENT3(:,:,k) = imclose(reduced_ENT3(:,:,k),se2);
+    reduced_ENT3(:,j,:) = imfill(reduced_ENT3(:,j,:),'holes');
+end
+
+
+% figure(11);
+% sliceViewer(reduced_ENT3);
+%reduced_ENT3 = bwareafilt(sequence_binary,2);
+CC = bwconncomp(reduced_ENT3);
+if length(CC.PixelIdxList)>=1;
+    stats = regionprops(CC,'centroid');
+    for i = 1:length(stats);
+        y_coord(i) = stats(i).Centroid(2);
+    end
+    
+    if max(y_coord)>=(2/3*ixjxk(1));
+    [M,I] = max(y_coord);
+    getgone = CC.PixelIdxList(I); % need a line to decide which object to remove
+    reduced_ENT3(getgone{1,1}) = 0;
+    
+    else
+    end
+else
+end
+
+combined = double(sequence) + 100*double(reduced_ENT3);
+
+% figure(12);
+% sliceViewer(uint8(combined));
+
+for k = 1:ixjxk(3);
+    for j = 1:ixjxk(2);
+        for i = 1:ixjxk(1);
+            if reduced_ENT3(i,j,k) == 0;
+                sequence_masked(i,j,k) = 0;
+            else
+                sequence_masked(i,j,k) = sequence(i,j,k);
+            end
+        end
+    end
+    yonx = any(sequence_masked(:,:,k));
+    yony = any(sequence_masked(:,:,k)');
+    try
+        x_min(end+1) = find(yonx,1,'first');
+        x_max(end+1) = find(yonx,1,'last');
+        y_min(end+1) = find(yony,1,'first');
+        y_max(end+1) = find(yony,1,'last');
+    catch
+        x_min(end+1) = 0;
+        x_max(end+1) = 0;
+        y_min(end+1) = 0;
+        y_max(end+1) = 0;
+    end
+end
+
+% x_min_crop = min(x_min);
+% x_max_crop = max(x_max);
+% y_min_crop = min(y_min);
+% y_max_crop = max(y_max);
+
+%% Write .tif sequence
+for i = 1:length(numFrames);
+    filename = fullfile('F:\Students\Dale\out\',['Processed_SUN_scan_',sprintf('%04d',numFrames(i)),'.tif']);
+    imwrite(sequence_masked(:,:,i),filename);
+end
+fprintf("Done and written this stitch \n")
+toc
+close all
+end
+save("crop_datarec","y_min","y_max","x_min","x_max");
+% sequence_cropped = sequence_masked(y_min_crop:y_max_crop,x_min_crop:x_max_crop,:);
+% 
+% figure(100);
+% sliceViewer(sequence_cropped);
+% 
+
+toc
+function CTSrgb = plot_filters(CTSrgb, EDGErgb, colour);
+RGBtab = [0 0 255; 0 255 0; 0 0 0; 255 0 0; 255 255 255];  %RGB codes for colors
+colourabbr = {'b', 'g', 'k', 'r', 'w'};  %must match order of RGB triple rows
+[tf, idx] = ismember(colour, colourabbr); %look up codes to f
+colourgb = RGBtab(idx,:);  %convert to RGB triples
+
+ixjxk = size(CTSrgb);
+idxR = find(EDGErgb(:,:,:,1) == 1);
+idxG = idxR + ixjxk(1)*ixjxk(2)*ixjxk(3);
+idxB = idxR + 2*ixjxk(1)*ixjxk(2)*ixjxk(3);
+CTSrgb(idxR) = colourgb(1);
+CTSrgb(idxG) = colourgb(2);
+CTSrgb(idxB) = colourgb(3);
+end
